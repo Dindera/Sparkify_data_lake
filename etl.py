@@ -72,9 +72,9 @@ def process_log_data(spark, input_data, output_data):
     users_table.write.parquet(output_data+'users_table', mode="overwrite")
 
     # create timestamp column from original timestamp column
-    get_timestamp = udf(lambda x: x, TimestampType())
+    get_timestamp = udf(lambda x: datetime.fromtimestamp(x/1000).isoformat())
 
-    df = df.withColumn("timestamp", get_timestamp("ts"))
+    df = df.withColumn("start_time", get_timestamp("ts").cast("timestamp"))
     
     # create datetime column from original timestamp column
     get_datetime =  udf(lambda x: x, DateType())
@@ -96,18 +96,27 @@ def process_log_data(spark, input_data, output_data):
     # extract columns from joined song and log datasets to create songplays table 
     songplays_table = df.join(song_df, df.artist==song_df.artist_name, 'inner')\
                   .withColumn("songplay_id", monotonically_increasing_id())\
-                  .select([col("start_time"), 
+                  .withColumn("year", year(df.start_time))\
+                  .withColumn("month", month(col("start_time")))\
+
+    songplays_table = songplays_table.select(
+                          [col("songplay_id"),
+                          col("start_time"), 
                           col("userId").alias("user_id"), 
                           col("level"), 
                           col("song_id"),
                           col("artist_id"),
                           col("sessionId").alias("session_id"),
                           col("location"),
-                          col("userAgent").alias("user_agent")])
+                          col("userAgent").alias("user_agent"),
+                          col("year"),
+                          col("month")
+                          ])
+            
 
-    # write songplays table to parquet files partitioned by year and month
+     # write songplays table to parquet files partitioned by year and month
+
     songplays_table.write.parquet(output_data+'songplays_table', mode="overwrite" , partitionBy=['year', 'month'])
-
 
 
 def main():
