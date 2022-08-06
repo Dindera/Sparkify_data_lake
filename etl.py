@@ -2,9 +2,8 @@ import configparser
 from datetime import datetime
 import os
 from pyspark.sql import SparkSession
-from pyspark.sql.types import TimestampType, DateType
 from pyspark.sql.functions import udf, col, monotonically_increasing_id
-from pyspark.sql.functions import year, month, dayofmonth, hour, weekofyear, date_format, dayofweek
+from pyspark.sql.functions import year, month, dayofmonth, hour, weekofyear, dayofweek
 
 config = configparser.ConfigParser()
 config.read('dl.cfg')
@@ -22,6 +21,16 @@ def create_spark_session():
 
 
 def process_song_data(spark, input_data, output_data):
+    """Extracts song_data from s3, processes and loads tables created into s3
+     
+     Args: 
+         spark(func): spark session
+         input_data (str): s3 source for song_data
+         output_data (str): s3 source to load processed data
+     
+     Returns:
+         None
+    """
     # get filepath to song data file
     song_data = os.path.join(input_data, "song_data/A/A/*/*.json")
 
@@ -47,9 +56,18 @@ def process_song_data(spark, input_data, output_data):
     # write artists table to parquet files
     artists_table.write.parquet(output_data+'artists_table', mode="overwrite")
 
-    return song_data
 
 def process_log_data(spark, input_data, output_data):
+    """Extracts log_data from s3, processes and loads tables created into s3
+     
+     Args: 
+         spark(func): spark session
+         input_data (str): s3 source for song_data
+         output_data (str): s3 source to load processed data
+     
+     Returns:
+         None
+    """
     # get filepath to log data file
     log_data = os.path.join(input_data, "log_data/*/*")
 
@@ -76,11 +94,6 @@ def process_log_data(spark, input_data, output_data):
 
     df = df.withColumn("start_time", get_timestamp("ts").cast("timestamp"))
     
-    # create datetime column from original timestamp column
-    get_datetime =  udf(lambda x: x, DateType())
-
-    df = df.withColumn("start_time", get_datetime("timestamp"))
-    
     # extract columns to create time table
     time_table = df.select("start_time").dropDuplicates()\
     .withColumn("hour", hour(col("start_time"))).withColumn("day", dayofmonth(col("start_time")))\
@@ -88,16 +101,17 @@ def process_log_data(spark, input_data, output_data):
     .withColumn("year", year(col("start_time"))).withColumn("weekday", dayofweek(col("start_time")))
     
     # write time table to parquet files partitioned by year and month
-    time_table.write.parquet(output_data+'time_table', mode="overwrite")
+    time_table.write.parquet(output_data+'time_table', mode="overwrite", partitionBy=['year', 'month'])
 
     # read in song data to use for songplays table
-    song_df = process_song_data(spark, input_data, output_data)
+    song_data = os.path.join(input_data, "song_data/A/A/*/*.json")
+    song_df = spark.read.json(song_data, mode='PERMISSIVE', columnNameOfCorruptRecord='corrupt_record')
 
     # extract columns from joined song and log datasets to create songplays table 
     songplays_table = df.join(song_df, df.artist==song_df.artist_name, 'inner')\
                   .withColumn("songplay_id", monotonically_increasing_id())\
                   .withColumn("year", year(df.start_time))\
-                  .withColumn("month", month(col("start_time")))\
+                  .withColumn("month", month(col("start_time")))
 
     songplays_table = songplays_table.select(
                           [col("songplay_id"),
@@ -114,9 +128,8 @@ def process_log_data(spark, input_data, output_data):
                           ])
             
 
-     # write songplays table to parquet files partitioned by year and month
-
-    songplays_table.write.parquet(output_data+'songplays_table', mode="overwrite" , partitionBy=['year', 'month'])
+    # write songplays table to parquet files partitioned by year and month
+    songplays_table.write.parquet(output_data+'songplays_table', mode="overwrite", partitionBy=['year', 'month'])
 
 
 def main():
